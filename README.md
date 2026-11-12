@@ -10,6 +10,11 @@ For your own modified source checkout, start from the gRASPA example
 validation through the existing CLI. Live actions use the explicit machine
 configuration and resource limits without a site-verification approval gate.
 
+For a pinned upstream Python package, see the MACE-Polar example
+(`--template examples/mace-polar/record`). It installs a `git` tag with `uv` and no site
+modules, caches the model checkpoint in the prefix, and runs a completion-only GPU
+single point.
+
 IRI is the intended default for remote Polaris and Aurora controllers. PBS over
 SSH and the personal local PBS pilot are explicit alternatives. Neither adapter
 has been verified on the actual sites yet. All committed test fixtures are synthetic.
