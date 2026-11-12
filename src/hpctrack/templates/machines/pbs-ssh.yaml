@@ -1,0 +1,24 @@
+# PBS reached over a human-authenticated SSH ControlMaster (`hpctrack connect`).
+# Replace every REPLACE_* value.
+records_dir: records
+state_dir: state
+machines:
+  polaris:
+    backend: pbs_ssh
+    transport: ssh
+    ssh_alias: polaris
+    user: REPLACE_USERNAME
+    software_root: /REPLACE_PROJECT_FILESYSTEM/software
+    work_root: /REPLACE_PROJECT_FILESYSTEM/jobs
+    queues:
+      debug:
+        min_nodes: 1
+        max_nodes: 1
+        min_walltime: 300
+        max_walltime: 600
+        max_active: 1
+    accounts: [REPLACE_ACCOUNT]
+    filesystems: [REPLACE_FILESYSTEM]
+    max_nodes: 1
+    max_walltime: 600
+    max_node_hours: 0.2

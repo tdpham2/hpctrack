@@ -1,0 +1,23 @@
+# PBS on the machine where hpctrack runs (e.g. a login node). Replace every
+# REPLACE_* value. Install roots belong on a project filesystem, not $HOME.
+records_dir: records
+state_dir: state
+machines:
+  polaris:
+    backend: pbs_local
+    transport: local
+    user: ${USER}
+    software_root: /REPLACE_PROJECT_FILESYSTEM/${USER}/hpctrack/software
+    work_root: /REPLACE_PROJECT_FILESYSTEM/${USER}/hpctrack/work
+    queues:
+      debug:
+        min_nodes: 1
+        max_nodes: 1
+        min_walltime: 300
+        max_walltime: 900
+        max_active: 1
+    accounts: [REPLACE_ACCOUNT]
+    filesystems: [REPLACE_FILESYSTEM]
+    max_nodes: 1
+    max_walltime: 900
+    max_node_hours: 0.25

@@ -41,16 +41,94 @@ def load_record(path):
         ) from exc
 
 
+def placeholders(path):
+    """Return record inputs that still contain template REPLACE_* values."""
+    return [
+        name
+        for name in ("record.yaml", "build.sh", "test/job.sh.j2")
+        if "REPLACE_" in (path / name).read_text(errors="replace")
+    ]
+
+
+def require_filled(path):
+    found = placeholders(path)
+    if found:
+        raise TrackError(
+            "record_placeholders",
+            "Fill every REPLACE_* value in the record before running it",
+            2,
+            files=found,
+        )
+
+
+def add_note(path, message, heading, stamp):
+    """Insert a dated entry at the end of one NOTES.md section, preserving heading order."""
+    if heading not in HEADINGS:
+        raise TrackError("invalid_section", "Unknown NOTES.md section", 2, sections=HEADINGS)
+    notes = (path / "NOTES.md").read_text()
+    start = notes.find("## " + heading)
+    following = [notes.find("\n## " + h, start) for h in HEADINGS[HEADINGS.index(heading) + 1 :]]
+    end = min([index for index in following if index >= 0], default=len(notes))
+    entry = f"- {stamp}: " + " ".join(message.split())
+    section = notes[start:end].rstrip("\n")
+    if "\n" not in section:
+        section += "\n"  # Keep a blank line below a bare heading.
+    atomic_write(path / "NOTES.md", notes[:start] + section + "\n" + entry + "\n" + notes[end:])
+    return entry
+
+
 def contract_hash(path, record):
     files = read_tree(path / "test")
     files.pop("reference.json", None)
-    return digest(
-        {
-            "test": tree_hash(files),
-            "metrics": record.metrics,
-            "resources": record.validation.model_dump(),
+    contract = {
+        "test": tree_hash(files),
+        "metrics": record.metrics,
+        "resources": record.validation.model_dump(),
+    }
+    # Preserve hashes for existing reference records.
+    if record.validation_mode != "reference":
+        contract["validation_mode"] = record.validation_mode
+    return digest(contract)
+
+
+def capture_working_tree(source, destination):
+    root = Path(source.url)
+    if not root.is_dir():
+        raise TrackError("invalid_source", "Working-tree source directory does not exist", 2)
+    files = read_tree(root, exclude=(".git", *source.exclude))
+    if not files:
+        raise TrackError("invalid_source", "Working-tree snapshot contains no files", 2)
+    executables = []
+    source_files = {}
+    for name, content in files.items():
+        atomic_write(destination / name, content)
+        source_files[name] = {
+            "original_path": str(root / name),
+            "snapshot_path": str(destination / name),
+            "sha256": digest(content),
         }
-    )
+        if (root / name).stat().st_mode & 0o111:
+            executables.append(name)
+    # Git is optional; content hashes, not repository cleanliness, identify the build.
+    commit = None
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            commit = result.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return {
+        "source_snapshot": str(destination),
+        "source_ref": tree_hash(files),
+        "source_commit": commit,
+        "source_executables": executables,
+        "source_files": source_files,
+    }
 
 
 def init_record(path, machine, template=None):

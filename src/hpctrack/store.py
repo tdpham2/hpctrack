@@ -1,5 +1,6 @@
 import contextlib
 import fcntl
+import getpass
 import json
 import os
 import sqlite3
@@ -7,7 +8,9 @@ import uuid
 from pathlib import Path
 
 from hpctrack.errors import TrackError
-from hpctrack.util import now
+from hpctrack.util import identifier, now
+
+SCHEMA_VERSION = 2
 
 
 class Store:
@@ -17,7 +20,7 @@ class Store:
         self.db = sqlite3.connect(self.root / "hpctrack.db", timeout=5)
         self.db.row_factory = sqlite3.Row
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1):
+        if version > SCHEMA_VERSION:
             raise TrackError("schema_version", "Database was created by a newer hpctrack", 2)
         self.db.execute("PRAGMA journal_mode=DELETE")
         self.db.execute("PRAGMA synchronous=FULL")
@@ -30,12 +33,31 @@ class Store:
         CREATE TABLE IF NOT EXISTS events (
             sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL,
             time TEXT NOT NULL, machine TEXT, kind TEXT NOT NULL, subject TEXT NOT NULL,
-            actor TEXT NOT NULL, operation_id TEXT, payload TEXT NOT NULL);
-        PRAGMA user_version=1;
+            actor TEXT NOT NULL, operation_id TEXT, payload TEXT NOT NULL,
+            actor_detail TEXT);
         """)
+        columns = {row["name"] for row in self.db.execute("PRAGMA table_info(events)")}
+        if "actor_detail" not in columns:  # Version 1 databases keep their events unchanged.
+            self.db.execute("ALTER TABLE events ADD COLUMN actor_detail TEXT")
+        self.db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         self.actor = os.environ.get("HPCTRACK_ACTOR", "human")
         if self.actor not in ("human", "agent"):
             raise TrackError("invalid_actor", "HPCTRACK_ACTOR must be human or agent", 2)
+        self.actor_detail = {"kind": self.actor, "user": None, "agent": None, "session": None}
+        try:
+            self.actor_detail["user"] = getpass.getuser()
+        except (OSError, KeyError):
+            pass
+        for key in ("agent", "session"):
+            value = os.environ.get(f"HPCTRACK_{key.upper()}")
+            if value:
+                # Short labels only; never accept free text that could carry credentials.
+                try:
+                    self.actor_detail[key] = identifier(value)
+                except TrackError as exc:
+                    raise TrackError(
+                        "invalid_actor", f"HPCTRACK_{key.upper()} must be a short identifier", 2
+                    ) from exc
 
     @contextlib.contextmanager
     def mutation(self):
@@ -79,8 +101,8 @@ class Store:
 
     def _event(self, kind, subject, data, machine=None, operation_id=None):
         self.db.execute(
-            "INSERT INTO events(id,time,machine,kind,subject,actor,operation_id,payload) "
-            "VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO events(id,time,machine,kind,subject,actor,operation_id,payload,"
+            "actor_detail) VALUES (?,?,?,?,?,?,?,?,?)",
             (
                 str(uuid.uuid4()),
                 now(),
@@ -90,8 +112,13 @@ class Store:
                 self.actor,
                 operation_id,
                 json.dumps(data),
+                json.dumps(self.actor_detail),
             ),
         )
+
+    def event(self, kind, subject, data, machine=None, operation_id=None):
+        with self.db:
+            self._event(kind, subject, data, machine, operation_id)
 
     def new_operation(self, kind, data):
         operation = {"id": uuid.uuid4().hex, "kind": kind, "status": "preparing", "data": data}
@@ -134,14 +161,25 @@ class Store:
             )
         ]
 
-    def history(self, subject):
-        rows = self.db.execute("SELECT * FROM events ORDER BY sequence")
-        events = [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
+    def events(self, subject=None, machine=None, since=0):
+        query, parameters = "SELECT * FROM events WHERE sequence>?", [since]
+        if subject:
+            query += " AND (subject=? OR json_extract(payload,'$.record_key')=?)"
+            parameters += [subject, subject]
+        if machine:
+            query += " AND machine=?"
+            parameters.append(machine)
         return [
-            event
-            for event in events
-            if event["subject"] == subject or event["payload"].get("record_key") == subject
+            {
+                **dict(row),
+                "payload": json.loads(row["payload"]),
+                "actor_detail": json.loads(row["actor_detail"]) if row["actor_detail"] else None,
+            }
+            for row in self.db.execute(query + " ORDER BY sequence", parameters)
         ]
+
+    def history(self, subject):
+        return self.events(subject)
 
     def close(self):
         self.db.close()

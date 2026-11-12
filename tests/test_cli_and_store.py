@@ -45,20 +45,19 @@ def test_agent_cannot_connect_even_in_demo(config_path):
     assert result.returncode == 30 and payload["error"] == "human_only"
 
 
-def test_live_example_is_disabled(tmp_path):
+def test_live_example_requires_actual_configuration(tmp_path):
     result, payload = run_cli(
-        ROOT / "config/machines.example.yaml", "--state-dir", str(tmp_path / "live"), "doctor"
+        ROOT / "src/hpctrack/templates/machines/iri.yaml",
+        "--state-dir",
+        str(tmp_path / "live"),
+        "doctor",
     )
-    assert result.returncode == 30
-    assert payload["data"] if "data" in payload else payload["machines"]
-    assert all(
-        item["backend"]["error"] == "site_unverified" for item in payload["machines"].values()
-    )
+    assert result.returncode == 2 and payload["error"] == "invalid_config"
 
 
-def test_state_override_keeps_demo_records_isolated(tmp_path):
-    settings = Settings(ROOT / "examples/demo/machines.yaml", tmp_path / "new-state")
-    assert settings.records == tmp_path / "new-state/records"
+def test_state_override_keeps_demo_install_roots_in_state(config_path, tmp_path):
+    settings = Settings(config_path, tmp_path / "new-state")
+    assert settings.records == tmp_path / "software"
     assert str(settings.machine("demo").software_root).startswith(str(settings.state))
 
 

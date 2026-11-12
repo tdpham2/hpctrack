@@ -8,7 +8,8 @@ from hpctrack.config import Settings
 from hpctrack.service import Service
 
 REPO = Path(__file__).resolve().parents[1]
-TEMPLATE = REPO / "examples/demo/record"
+TEMPLATES = REPO / "src/hpctrack/templates"
+TEMPLATE = TEMPLATES / "records/demo"
 
 
 @pytest.fixture(autouse=True)
@@ -22,8 +23,8 @@ def offline(monkeypatch):
 
 @pytest.fixture
 def config_path(tmp_path):
-    content = yaml.safe_load((REPO / "examples/demo/machines.yaml").read_text())
-    content.update(project_root=".", records_dir="software", state_dir="state")
+    content = yaml.safe_load((TEMPLATES / "machines/demo.yaml").read_text())
+    content.update(records_dir="software", state_dir="state")
     path = tmp_path / "config.yaml"
     path.write_text(yaml.safe_dump(content))
     return path

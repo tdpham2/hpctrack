@@ -1,3 +1,6 @@
+import os
+import subprocess
+from importlib import resources
 from pathlib import Path
 
 import yaml
@@ -5,7 +8,100 @@ from pydantic import ValidationError
 
 from hpctrack.errors import TrackError
 from hpctrack.models import Config
-from hpctrack.util import identifier, within
+from hpctrack.util import atomic_write, identifier, within
+
+CONFIG_NAME = "hpctrack.yaml"
+
+
+def resolve_workspace(workspace=None):
+    """Return the data home: --workspace, then $HPCTRACK_HOME, then ~/.hpctrack."""
+    value = workspace or os.environ.get("HPCTRACK_HOME") or Path.home() / ".hpctrack"
+    return Path(value).expanduser().resolve()
+
+
+def workspace_config(workspace=None):
+    root = resolve_workspace(workspace)
+    path = root / CONFIG_NAME
+    if not path.is_file():
+        raise TrackError(
+            "workspace_missing",
+            "No hpctrack workspace found",
+            2,
+            workspace=str(root),
+            fix=f"hpctrack --workspace {root} init --machines demo",
+        )
+    return path
+
+
+def templates():
+    return resources.files("hpctrack") / "templates"
+
+
+def template_names(kind):
+    return sorted(
+        item.name.removesuffix(".yaml")
+        for item in (templates() / kind).iterdir()
+        if not item.name.startswith((".", "_"))
+    )
+
+
+def record_template(value):
+    """Resolve a packaged record template name, otherwise treat the value as a path."""
+    if value is None:
+        return None
+    if value in template_names("records"):
+        return Path(str(templates() / "records" / value))
+    path = Path(value).expanduser()
+    if not path.is_dir():
+        raise TrackError(
+            "unknown_template",
+            "Template is neither a packaged name nor a directory",
+            2,
+            available=template_names("records"),
+        )
+    return path
+
+
+def _copy_template(source, destination):
+    if source.is_dir():
+        for item in source.iterdir():
+            if item.name != "__pycache__":
+                _copy_template(item, destination / item.name)
+    else:
+        atomic_write(destination, source.read_bytes())
+
+
+def init_workspace(workspace=None, machines="demo", git=True):
+    """Create a self-contained data home from packaged templates; never overwrite one."""
+    root = resolve_workspace(workspace)
+    if machines not in template_names("machines"):
+        raise TrackError(
+            "unknown_template", "Unknown machine template", 2, available=template_names("machines")
+        )
+    if (root / CONFIG_NAME).exists() or (root.is_dir() and any(root.iterdir())):
+        raise TrackError(
+            "workspace_exists",
+            "Refusing to initialize a non-empty directory",
+            30,
+            workspace=str(root),
+        )
+    source = templates()
+    atomic_write(root / CONFIG_NAME, (source / "machines" / f"{machines}.yaml").read_bytes())
+    for item in (source / "workspace").iterdir():
+        name = ".gitignore" if item.name == "gitignore" else item.name
+        _copy_template(item, root / name)
+    (root / "records").mkdir(exist_ok=True)
+    result = {"workspace": str(root), "config": str(root / CONFIG_NAME), "git": False}
+    if git:
+        completed = subprocess.run(
+            ["git", "init", "-q", "-b", "main", str(root)], capture_output=True, timeout=30
+        )
+        result["git"] = completed.returncode == 0
+    content = (root / CONFIG_NAME).read_text()
+    result["placeholders"] = "REPLACE_" in content
+    if result["placeholders"]:
+        result["fix"] = f"Fill every REPLACE_* value in {root / CONFIG_NAME}, then run doctor"
+    return result
 
 
 class Settings:
@@ -16,8 +112,8 @@ class Settings:
         except (OSError, yaml.YAMLError, ValidationError) as exc:
             raise TrackError(
                 "invalid_config",
-                "Cannot load configuration; use the explicit demo "
-                "config or fill config/machines.example.yaml",
+                "Cannot load configuration; fill every REPLACE_* value in the "
+                "workspace hpctrack.yaml",
                 2,
                 path=str(path),
                 reason=type(exc).__name__,
@@ -42,14 +138,6 @@ class Settings:
         if machine.backend == "fake":
             machine.software_root = str(within(self.state, self.state / machine.software_root))
             machine.work_root = str(within(self.state, self.state / machine.work_root))
-        elif live and not machine.site_verified:
-            raise TrackError(
-                "site_unverified",
-                "Complete site verification before live actions",
-                30,
-                machine=name,
-                fix="Review docs/site-notes.md and set site_verified",
-            )
         return machine
 
     def record_path(self, name, machine):

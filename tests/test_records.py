@@ -1,5 +1,7 @@
+import hashlib
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 import yaml
@@ -202,8 +204,6 @@ def test_snapshot_tampering_refuses_resumed_execution(service, record, monkeypat
     with monkeypatch.context() as patch:
         patch.setattr(service, "_run_build", lambda operation, wait: operation)
         operation = service.build("tiny", "demo")
-    from pathlib import Path
-
     (Path(operation["data"]["snapshot"]) / "build.sh").write_text("echo changed\n")
     with pytest.raises(TrackError) as error:
         service.resume(operation["id"])
@@ -236,3 +236,136 @@ def test_pending_promotion_does_not_commit_changed_test(service, record, accepte
     with pytest.raises(TrackError) as resumed:
         service.resume(operation_id)
     assert resumed.value.result["error"] == "promotion_changed"
+
+
+def test_failed_revalidation_blocks_older_pass(service, record, accepted):
+    build = accepted[0]
+    service.promote("tiny", "demo", build["id"], True)
+    (Path(build["prefix"]) / "bin/calculate.py").write_text("raise SystemExit(7)\n")
+    with pytest.raises(TrackError) as failed:
+        service.validate("tiny", "demo", build["id"], wait_timeout=10)
+    assert failed.value.code == 10
+    assert (
+        service.store.get("build", build["id"])["last_validation_id"]
+        == (failed.value.result["validation"]["id"])
+    )
+    with pytest.raises(TrackError) as refused:
+        service.promote("tiny", "demo", build["id"], True)
+    assert refused.value.result["error"] == "promotion_refused"
+    metadata = service.store.get("record", "tiny/demo")
+    assert metadata["current_build"] == build["id"] and metadata["status"] == "broken"
+
+
+def test_pending_promotion_rechecks_environment_and_source(service, record, accepted):
+    with pytest.raises(TrackError) as pending:
+        service.promote("tiny", "demo", accepted[0]["id"])
+    assert pending.value.result["error"] == "git_required"
+    operation_id = pending.value.result["operation_id"]
+    declaration = record / "record.yaml"
+    original = declaration.read_bytes()
+    changed = yaml.safe_load(original)
+    changed["environment_probes"] = {"compiler": ["different-compiler", "--version"]}
+    declaration.write_text(yaml.safe_dump(changed))
+    with pytest.raises(TrackError) as refused:
+        service.resume(operation_id)
+    assert refused.value.result["error"] == "promotion_changed"
+    declaration.write_bytes(original)
+    (record / "source/calculate.py").write_text("raise SystemExit(7)\n")
+    with pytest.raises(TrackError) as refused:
+        service.resume(operation_id)
+    assert refused.value.result["error"] == "source_changed"
+    assert service.store.operation(operation_id)["status"] == "commit_pending"
+
+
+def test_working_tree_completion_lifecycle(service, record, tmp_path, monkeypatch):
+    source = tmp_path / "user-source"
+    source.mkdir()
+    program = source / "calculate.py"
+    program.write_bytes((record / "source/calculate.py").read_bytes())
+    for args in (
+        ("init", "-b", "main"),
+        ("config", "user.name", "Test"),
+        ("config", "user.email", "test@example.invalid"),
+        ("add", "calculate.py"),
+        ("commit", "-m", "Test source"),
+    ):
+        subprocess.run(["git", "-C", str(source), *args], check=True, capture_output=True)
+    captured = program.read_text() + "\n# User's uncommitted change\n"
+    program.write_text(captured)
+    (source / "install.sh").write_text("#!/bin/sh\necho 'user install script'\n")
+    (source / "install.sh").chmod(0o700)
+    (source / "stale.o").write_bytes(b"old object")
+    (source / "stale.x").write_bytes(b"old executable")
+    declaration = yaml.safe_load((record / "record.yaml").read_text())
+    declaration.update(
+        source={"type": "working_tree", "url": str(source), "exclude": ["*.o", "*.x"]},
+        validation_mode="completion",
+        metrics={},
+    )
+    (record / "record.yaml").write_text(yaml.safe_dump(declaration))
+    (record / "build.sh").write_text(
+        '#!/bin/bash\nset -eu\n"$SRC_DIR/install.sh"\n'
+        'mkdir -p "$PREFIX/bin"\ncp "$SRC_DIR/calculate.py" "$PREFIX/bin/calculate.py"\n'
+    )
+    checker = (
+        Path(__file__).resolve().parents[1] / "src/hpctrack/templates/records/graspa/test/check.py"
+    )
+    (record / "test/check.py").write_bytes(checker.read_bytes())
+    # Synthetic application output: no GPU or site execution is involved.
+    output = (
+        "SYNTHETIC TEST OUTPUT\nINITIALIZATION PHASE ENDS\nPRODUCTION PHASE ENDS\n"
+        "END OF PROGRAM!\nTotal GPU Energy:\nWork took 1.5 seconds\n"
+        "*** GPU DRIFT (GPU FINAL - CPU FINAL) ***\nTotal Energy: -6740.0\n"
+    )
+    log = record / "test/input/synthetic.log"
+    log.write_text(output)
+    job = record / "test/job.sh.j2"
+    job.write_text(
+        job.read_text() + '\ncp {{ (input_dir + "/synthetic.log") | quote }} graspa.stdout.log\n'
+    )
+    with monkeypatch.context() as patch:
+        patch.setattr(service, "_run_build", lambda operation, wait: operation)
+        operation = service.build("tiny", "demo")
+    frozen = Path(operation["data"]["source_snapshot"])
+    assert {p.name for p in frozen.iterdir()} == {"calculate.py", "install.sh"}
+    assert operation["data"]["source_commit"]
+    assert (frozen / "calculate.py").read_text() == captured
+    files = operation["data"]["source_files"]
+    assert set(files) == {"calculate.py", "install.sh"}
+    install = files["install.sh"]
+    assert install == {
+        "original_path": str(source / "install.sh"),
+        "snapshot_path": str(frozen / "install.sh"),
+        "build_path": operation["data"]["directory"] + "/source/install.sh",
+        "sha256": hashlib.sha256((source / "install.sh").read_bytes()).hexdigest(),
+    }
+    program.write_text("raise SystemExit(99)\n")  # Later edits must not affect resume.
+    build = service.resume(operation["id"], wait_timeout=10)["operations"][0]
+    # The committed build keeps only content hashes; full paths stay in the operation.
+    assert build["source_files"] == {name: info["sha256"] for name, info in files.items()}
+    manifest = json.loads((record / "manifest.json").read_text())
+    assert str(source) not in json.dumps(manifest["builds"][0]["source_files"])
+    assert files["calculate.py"]["sha256"] == hashlib.sha256(captured.encode()).hexdigest()
+    assert Path(install["build_path"]).read_bytes() == Path(install["snapshot_path"]).read_bytes()
+    assert (Path(build["record_snapshot"]) / "build.sh").read_bytes() == (
+        record / "build.sh"
+    ).read_bytes()
+    assert (Path(build["prefix"]) / "bin/calculate.py").read_text() == captured
+    assert program.read_text() == "raise SystemExit(99)\n"
+    assert (source / "stale.o").read_bytes() == b"old object"
+    validation = service.validate("tiny", "demo", build["id"], wait_timeout=10)
+    assert not (Path(validation["logs"]) / "gpu-info.txt").exists()
+    assert (Path(validation["record_snapshot"]) / "test/input/synthetic.log").read_text() == output
+    assert validation["state"] == "passed" and validation["validation_mode"] == "completion"
+    assert validation["metrics"]["gpu_drift_internal"] == -6740.0
+    assert validation["reference_hash"] is None
+    assert not (record / "test/reference.json").exists()
+    promoted = service.promote("tiny", "demo", build["id"], True)
+    assert promoted["manifest"]["status"] == "validated"
+    assert promoted["manifest"]["simulated"] is True
+    # A zero-exit application with incomplete output still fails its completion checker.
+    log.write_text(output.replace("PRODUCTION PHASE ENDS", "truncated"))
+    with pytest.raises(TrackError) as failed:
+        service.validate("tiny", "demo", build["id"], wait_timeout=10)
+    assert failed.value.code == 10
+    assert service.store.get("record", "tiny/demo")["status"] == "broken"
