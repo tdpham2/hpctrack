@@ -44,13 +44,55 @@ def load_record(path):
 def contract_hash(path, record):
     files = read_tree(path / "test")
     files.pop("reference.json", None)
-    return digest(
-        {
-            "test": tree_hash(files),
-            "metrics": record.metrics,
-            "resources": record.validation.model_dump(),
+    contract = {
+        "test": tree_hash(files),
+        "metrics": record.metrics,
+        "resources": record.validation.model_dump(),
+    }
+    # Preserve hashes for existing reference records.
+    if record.validation_mode != "reference":
+        contract["validation_mode"] = record.validation_mode
+    return digest(contract)
+
+
+def capture_working_tree(source, destination):
+    root = Path(source.url)
+    if not root.is_dir():
+        raise TrackError("invalid_source", "Working-tree source directory does not exist", 2)
+    files = read_tree(root, exclude=(".git", *source.exclude))
+    if not files:
+        raise TrackError("invalid_source", "Working-tree snapshot contains no files", 2)
+    executables = []
+    source_files = {}
+    for name, content in files.items():
+        atomic_write(destination / name, content)
+        source_files[name] = {
+            "original_path": str(root / name),
+            "snapshot_path": str(destination / name),
+            "sha256": digest(content),
         }
-    )
+        if (root / name).stat().st_mode & 0o111:
+            executables.append(name)
+    # Git is optional; content hashes, not repository cleanliness, identify the build.
+    commit = None
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            commit = result.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return {
+        "source_snapshot": str(destination),
+        "source_ref": tree_hash(files),
+        "source_commit": commit,
+        "source_executables": executables,
+        "source_files": source_files,
+    }
 
 
 def init_record(path, machine, template=None):

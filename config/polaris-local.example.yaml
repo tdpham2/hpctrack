@@ -1,0 +1,24 @@
+# Native PBS from an existing Polaris session. Replace every placeholder.
+# project_root is a private Git repository, separate from the hpctrack checkout.
+project_root: /REPLACE_PRIVATE_RECORDS_REPO
+records_dir: software
+state_dir: state
+machines:
+  polaris:
+    backend: pbs_local
+    transport: local
+    user: REPLACE_USERNAME
+    software_root: /REPLACE_PRIVATE_RECORDS_REPO/install
+    work_root: /REPLACE_PRIVATE_RECORDS_REPO/work
+    queues:
+      debug:
+        min_nodes: 1
+        max_nodes: 1
+        min_walltime: 300
+        max_walltime: 900
+        max_active: 1
+    accounts: [REPLACE_ACCOUNT]
+    filesystems: [home, eagle]
+    max_nodes: 1
+    max_walltime: 900
+    max_node_hours: 0.25

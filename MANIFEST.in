@@ -1,5 +1,11 @@
 include AGENTS.md plan.md .gitignore
-recursive-include docs *.md
-include config/machines.example.yaml
-recursive-include examples *.yaml *.sh *.j2 *.py *.json *.md
+include docs/deployment.md docs/site-notes.md docs/graspa-pilot.md
+include config/machines.example.yaml config/polaris-local.example.yaml
+recursive-include examples/demo *.yaml *.sh *.j2 *.py *.json *.md
+include examples/graspa/record/record.yaml examples/graspa/record/build.sh examples/graspa/record/NOTES.md
+include examples/graspa/record/test/job.sh.j2 examples/graspa/record/test/check.py examples/graspa/record/test/input/README.md
 recursive-include tests *.py
+prune software
+prune state
+prune private
+exclude config/machines.yaml

@@ -4,6 +4,7 @@ import os
 import re
 import tempfile
 from datetime import datetime, timezone
+from fnmatch import fnmatch
 from pathlib import Path
 
 from hpctrack.errors import TrackError
@@ -59,10 +60,14 @@ def within(root, path):
     return path
 
 
-def read_tree(root):
+def read_tree(root, exclude=()):
     root = Path(root)
     result = {}
     for path in sorted(root.rglob("*")):
+        relative = path.relative_to(root)
+        names = [relative, *relative.parents]
+        if any(fnmatch(name.as_posix(), pattern) for name in names for pattern in exclude):
+            continue
         if path.is_symlink():
             raise TrackError("symlink_refused", "Record inputs cannot contain symlinks", 30)
         if path.is_file():
@@ -70,7 +75,7 @@ def read_tree(root):
                 raise TrackError(
                     "input_too_large", "Individual staged files must be under 10 MiB", 30
                 )
-            result[path.relative_to(root).as_posix()] = path.read_bytes()
+            result[relative.as_posix()] = path.read_bytes()
     return result
 
 

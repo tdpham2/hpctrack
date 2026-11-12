@@ -1,0 +1,15 @@
+schema_version: 1
+source:
+  type: working_tree
+  url: /REPLACE_SOURCE_CHECKOUT/src_clean
+  exclude: ['*.o', '*.x']
+validation_mode: completion
+validation:
+  nodes: 1
+  walltime: 900
+  queue: debug
+  account: REPLACE_ACCOUNT
+metrics: {}
+environment_probes:
+  compiler: [bash, -lc, 'module load PrgEnv-nvidia && nvc++ --version 2>&1']
+  modules: [bash, -lc, 'module load PrgEnv-nvidia && LMOD_PAGER=cat module -t list 2>&1']

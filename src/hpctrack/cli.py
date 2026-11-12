@@ -64,7 +64,7 @@ def connect(service, machine):
     if service.store.actor != "human":
         raise TrackError("human_only", "Agents must never authenticate", 30)
     transport = service.transport(machine, live=False)
-    return transport.check() if transport.simulated else transport.connect()
+    return transport.check() if transport.config.transport == "local" else transport.connect()
 
 
 @cli.command()

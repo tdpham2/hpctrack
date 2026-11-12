@@ -1,10 +1,32 @@
 # HPC software and job tracker: implementation plan
 
-Nov 11, 2026 · @Thang · revised after implementation review
+Revised after implementation review.
+
+## Amendment: individual-user software records
+
+The current scope is a lean, single-user workflow: track installation status,
+rebuild modified code, and validate with a small job. These decisions supersede
+Crux/LAMMPS-first and mandatory reference-comparison requirements below. Later
+development phases remain deferred after the Phase 3 review.
+
+- Reuse the PBS adapter with explicit `pbs_local`/local transport; no SSH or IRI fallback.
+- Snapshot the declared working tree, respecting dirty/untracked source and leaving
+  originals untouched. Replay the user's install.sh in a fresh build copy.
+- Use optional completion validation for gRASPA; existing records default to reference
+  mode. Completion promotion reports `validated`, without claiming scientific agreement.
+- Keep machine configuration, source paths, scientific inputs and results in a
+  separate private records repository selected by project_root. Ship placeholder
+  examples and synthetic fixtures in the public tool repository.
+- Retain four focused regression tests for local PBS, source capture/completion,
+  failed revalidation and resumed promotion. Site/storage notes are advisory;
+  there is no site-verification approval gate, and configured limits remain enforced.
+
+See [the example runbook](docs/graspa-pilot.md). Agents use the same CLI and private
+records; a future skill can orchestrate it without introducing another storage format.
 
 ## Implementation status and confirmed decisions
 
-**Develop and test locally first; site verification gates live deployment, not coding.** The user superseded the original site-facts-first gate. Local acceptance uses an isolated demo transport/backend and synthetic fixtures. Keep live observations in [docs/site-notes.md](docs/site-notes.md) pending until confirmed on Crux and the target machines. Initialize Git where repository metadata is writable.
+**Develop and test locally first; site notes are advisory, with no deployment approval gate.** The user removed the site-verification gate. Local acceptance uses an isolated demo transport/backend and synthetic fixtures. Keep live observations in [docs/site-notes.md](docs/site-notes.md) and distinguish unverified facts from observed results. Initialize Git where repository metadata is writable.
 
 - Use IRI for both Polaris and Aurora. Keep PBS over SSH as an explicitly configured alternative, never an automatic submission fallback.
 - Make `sw check` inspect-only by default; remote execution requires the explicit flags described below.
@@ -31,9 +53,9 @@ Out of scope for v1:
 - Multi-user support or a hosted web server
 - Parsing live job output into science-level progress (planned follow-up)
 
-## Verify on the machines before live deployment
+## Advisory site observations
 
-Follow the human-run collection procedure and S01–S12 checklist in [docs/site-notes.md](docs/site-notes.md). Record execution location, timestamp, commands or site guidance, sanitized results, and human confirmation. Public documentation and workstation settings are not substitutes for observations from Crux compute nodes and the target machines.
+Use the human-run collection procedure and S01–S12 checklist in [docs/site-notes.md](docs/site-notes.md) as needed for troubleshooting. Record execution location, timestamp, commands or site guidance, sanitized results, and the observer. Public documentation and workstation settings are not substitutes for actual site observations; completing this checklist is not required to run configured operations.
 
 - Confirm SSH routes, master lifetime, idle policies, and detached-process survival on both targets.
 - Confirm Crux job lifetime/preemption, durable repository/state storage, one-controller ownership, and site-supported SQLite locking and durability. A passing smoke test alone does not establish reliable network filesystem behavior.
@@ -42,7 +64,7 @@ Follow the human-run collection procedure and S01–S12 checklist in [docs/site-
 - Confirm proxy/source access, approved allocations and queues, node/walltime/submission limits, per-command budgets, and build parallelism.
 - Capture sanitized adapter evidence without tokens or authorization headers. Actual submission/cancellation smoke tests remain Phase 2 acceptance work.
 
-If site evidence contradicts implementation assumptions, resolve the conflict before live use. No accounts, paths, or resource IDs are inferred from examples. Unknown site storage and execution details do not block local development; they remain deployment acceptance requirements.
+Use site evidence to diagnose conflicts with implementation assumptions. No accounts, paths, or resource IDs are inferred from examples. Unknown site storage and execution details remain documented uncertainties and do not trigger an approval gate.
 
 ## Local development and acceptance
 
@@ -52,7 +74,7 @@ If site evidence contradicts implementation assumptions, resolve the conflict be
 - Keep the Phase 3 review checkpoint. Staleness, scaling, dashboard, and seven operational skills follow review; machine acceptance follows deployment.
 - Test real adapters through injected HTTP/process boundaries, using explicitly synthetic fixtures. Test offline on Python 3.10 and the development interpreter; build and smoke-test a wheel.
 - `sw promote --no-commit` explicitly supports disposable non-Git demos. Default promotion still requires a record-only commit and remains resumable if Git is unavailable.
-- Deployment instructions are in `docs/deployment.md`. Live configuration defaults to `site_verified: false` and requires completed site facts before remote actions.
+- Deployment instructions are in `docs/deployment.md`. Live operations use explicit machine configuration and resource limits. The legacy `site_verified` field is accepted but ignored for execution.
 
 ## Architecture
 
@@ -63,13 +85,17 @@ IRI job queries do not require SSH. Builds, staging, log retrieval, and fingerpr
 
 ## Repository layout
 
-One Git repository holds the tool, software records, and skills. Use Python 3.10 or later, Click, Pydantic 2, Jinja2, requests, PyYAML, and the supported `alcf-tokens` integration. Use standard-library SQLite. Use pytest and Ruff for development. Add `packaging` for Python version comparisons and `markdown-it-py` for rendering notes, with raw HTML disabled. Use inline SVG for dashboard plots; no hosted service or chart CDN is required.
+The public Git repository holds the tool, placeholder examples, synthetic tests,
+and future skills. Personal software records live in a separate private Git
+repository selected by project_root. Use Python 3.10 or later, Click, Pydantic 2,
+Jinja2, requests, PyYAML, and the optional `alcf-tokens` integration. Use
+standard-library SQLite, pytest and Ruff. Dashboard dependencies remain deferred.
 
 ```text
 hpctrack/
   pyproject.toml
   AGENTS.md                  # entry point for agents: rules + pointer to skills/
-  config/machines.yaml       # per machine: ssh alias, job backend, queues, account, proxy
+  config/*.example.yaml      # public placeholders; real configuration stays private
   src/hpctrack/
     cli.py                   # all commands, --json on every one
     config.py
@@ -88,11 +114,16 @@ hpctrack/
     upstream.py              # PyPI and GitHub release checks
     store.py                 # transactional state, operation checkpoints, append-only events
     dashboard.py             # static HTML generator
-  software/<name>/<machine>/ # one software record each
   skills/<skill>/SKILL.md
-  docs/site-notes.md
-  state/                     # gitignored: hpctrack.db, logs, dashboard output
+  docs/site-notes.md          # advisory instructions, without private site evidence
   tests/
+
+private-records/             # separate private Git repository; project_root
+  machines.yaml              # gitignored: machine paths, account and limits
+  software/<name>/<machine>/ # tracked privately: one software record each
+  state/                     # gitignored: database and immutable snapshots
+  work/                      # gitignored: build/validation working copies and logs
+  install/                   # gitignored: installed executables
 ```
 
 ## Software record format
@@ -240,7 +271,7 @@ Other commands:
 
 SQLite is authoritative for jobs, builds, validations, studies, reference acceptance, operation checkpoints, and an append-only event table. The audit fields are stable event ID, UTC time, machine, kind, subject, actor, operation ID, and JSON payload. Add a database schema version; do not rely on filesystem projections to decide which actions have already run.
 
-Use rollback journaling, short transactions, and a confirmed durable state root. Only one Crux host owns the controller at a time. Concurrent local invocations serialize mutations and atomically claim operation steps; do not hold a database transaction across an SSH/API call. A replacement host cannot steal ownership while the original controller might still be active. SQLite on a network mount requires the Phase 0 storage decision; merely disabling WAL does not prove suitability.
+Use rollback journaling, short transactions, and a durable state root. Only one Crux host owns the controller at a time. Concurrent local invocations serialize mutations and atomically claim operation steps; do not hold a database transaction across an SSH/API call. A replacement host cannot steal ownership while the original controller might still be active. Document storage behavior in advisory site notes; merely disabling WAL does not prove network-filesystem suitability.
 
 For every side effect, persist intent and a unique operation ID first. Store rendered inputs, hashes, budget authorization, remote paths, receipts, and completion evidence. Detached builds use unique operation directories, a launch lock, logs, and an atomically written exit-status file. Missing completion evidence does not justify launching another build.
 
@@ -380,11 +411,11 @@ The guardrails are enforced in the tool, not only written in the skills, so they
 
 ## Implementation phases
 
-Build the local phases in order and meet their offline acceptance criteria. Site evidence is a separate deployment gate. Initialize and commit Git where metadata permissions allow; test Git behavior in temporary repositories. Stop after local Phase 3 for review. No daemon, schedule, or deployment is introduced.
+Build the local phases in order and meet their offline acceptance criteria. Site evidence is advisory. Initialize and commit Git where metadata permissions allow; test Git behavior in temporary repositories. Stop after local Phase 3 for review. No daemon or schedule is introduced.
 
 | Phase | Deliverables | Acceptance |
 | --- | --- | --- |
-| Deployment gate: site facts | Completed S01–S12 evidence and concrete configuration decisions | Human confirmation precedes live operations; local development proceeds independently |
+| Advisory site notes | Available S01–S12 observations and configuration decisions | Document observed behavior without requiring site-verification approval |
 | 1. Skeleton and connections | Package, root agent rules, validated machine config, JSON/errors, connect/remote, durable store, doctor | Bounded independent SSH/IRI health; missing master yields exit 20 without authentication fallback; state transactions and ownership behave as specified |
 | 2. Jobs | JobSpec/Job/JobBackend, IRI/PBS/fake, job commands, recovery | Local submission/sync/cancellation and synthetic adapter tests pass. Live qstat/IRI agreement is checked at deployment |
 | 3. Software records | Templates, builds, reference acceptance, validation, promotion, projections, Git integration | Deterministic demo clean-replays and promotes only after an accepted-reference comparison; wrong references and tampering fail. Temporary-repository commits preserve unrelated staging. Live LAMMPS acceptance follows deployment |

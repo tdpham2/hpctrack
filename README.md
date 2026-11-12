@@ -1,13 +1,23 @@
 # hpctrack
 
-A JSON command-line tool for reproducible HPC software records and resumable job
-tracking. Local development currently covers the foundation, jobs, and software
+A single-user JSON command-line tool for tracking HPC software installations,
+rebuilding modified source and validating small jobs. Development covers the foundation, jobs, and software
 record lifecycle (Phases 1–3). Staleness checks, scaling studies, dashboard, and
 operational skills follow the planned Phase 3 review.
 
-IRI is the intended default for Polaris and Aurora. PBS over SSH is an explicitly
-configured alternative. Neither adapter has been verified on the actual sites
-yet. All committed test fixtures are synthetic.
+For your own modified source checkout, see the [gRASPA example](docs/graspa-pilot.md).
+It uses explicit local PBS execution, working-tree snapshots, and completion-only
+validation through the existing CLI. Live actions use the explicit machine
+configuration and resource limits without a site-verification approval gate.
+
+Keep personal configuration, records, inputs and logs in a separate private Git
+repository selected by `project_root`. Public templates contain placeholders and
+no scientific dataset. Agents use the same CLI with `HPCTRACK_ACTOR=agent` and an
+explicit private `--config`; no additional record service is needed.
+
+IRI is the intended default for remote Polaris and Aurora controllers. PBS over
+SSH and the personal local PBS pilot are explicit alternatives. Neither adapter
+has been verified on the actual sites yet. All committed test fixtures are synthetic.
 
 ## Install
 
@@ -50,8 +60,9 @@ hpctrack --config examples/demo/machines.yaml sw show demo --machine demo
 
 `--no-commit` explicitly skips Git for this disposable demo. Normal promotion
 commits only the selected record and preserves unrelated staged files. For a
-tracked record, configure `records_dir: software` inside a Git worktree and omit
-`--no-commit`. Configure your Git identity before promotion.
+tracked record, configure `project_root` as a private Git worktree with
+`records_dir: software` and omit `--no-commit`. Configure your Git identity there
+before promotion. Promotion commits locally and never pushes records.
 
 The database is authoritative. Do not edit generated manifests, histories, or
 accepted references. Recipes, notes, test inputs/checkers, and `record.yaml` are
@@ -108,9 +119,9 @@ python -m build
 
 Tests use isolated temporary directories, mocked HTTP/SSH, and tiny local scripts.
 No real scheduler or token store is contacted. See [the implementation plan](plan.md),
-[deployment instructions](docs/deployment.md), and [site verification](docs/site-notes.md).
+[deployment instructions](docs/deployment.md), and [advisory site notes](docs/site-notes.md).
 
 Shell recipes/checkers are trusted code. Validating configured paths is not an
 operating-system sandbox. The demo and real transports share workflow code but
-live paths, allocations, storage durability, and scientific checks still require
-site acceptance before production use.
+live paths, allocations, storage durability, and scientific checks depend on the
+chosen environment. Site notes document observations without blocking execution.

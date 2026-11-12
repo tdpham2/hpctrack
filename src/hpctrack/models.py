@@ -24,7 +24,7 @@ class Queue(Model):
 
 
 class Machine(Model):
-    backend: Literal["fake", "iri", "pbs_ssh"]
+    backend: Literal["fake", "iri", "pbs_ssh", "pbs_local"]
     transport: Literal["local", "ssh"]
     ssh_alias: str | None = None
     resource_id: str | None = None
@@ -39,26 +39,29 @@ class Machine(Model):
     max_walltime: int = Field(ge=1)
     user: str | None = None
     proxy: str | None = None
-    site_verified: bool = False
+    site_verified: bool = False  # Legacy configuration field; does not gate execution.
 
     @model_validator(mode="after")
     def coherent(self):
-        if (self.backend == "fake") != (self.transport == "local"):
-            raise ValueError("fake backend requires local transport; live backends require SSH")
+        if (self.backend in ("fake", "pbs_local")) != (self.transport == "local"):
+            raise ValueError("fake/pbs_local require local transport; iri/pbs_ssh require SSH")
         if not self.queues or not self.accounts or any(not account for account in self.accounts):
             raise ValueError("queues and accounts must be configured")
+        if self.backend != "fake":
+            if not self.user:
+                raise ValueError("live machines require user")
+            if not all(path.startswith("/") for path in (self.software_root, self.work_root)):
+                raise ValueError("live roots must be absolute paths")
         if self.transport == "ssh":
             if not self.ssh_alias or not self.user:
                 raise ValueError("live machines require ssh_alias and user")
             if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.@-]*", self.ssh_alias):
                 raise ValueError("invalid SSH alias")
-            if not all(path.startswith("/") for path in (self.software_root, self.work_root)):
-                raise ValueError("live roots must be absolute paths")
         if self.backend == "iri" and not self.resource_id:
             raise ValueError("IRI requires a confirmed resource_id")
         if not self.api_url.startswith("https://"):
             raise ValueError("IRI requires HTTPS")
-        if self.site_verified and any(
+        if self.backend != "fake" and any(
             "REPLACE" in value
             for value in (
                 self.user or "",
@@ -69,7 +72,7 @@ class Machine(Model):
                 *self.filesystems,
             )
         ):
-            raise ValueError("replace example values before enabling live machines")
+            raise ValueError("replace example values with actual machine configuration")
         return self
 
 
@@ -128,15 +131,20 @@ class Job(Model):
 
 
 class Source(Model):
-    type: Literal["git", "local"]
+    type: Literal["git", "local", "working_tree"]
     url: str
     ref: str = "HEAD"
+    exclude: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def local_path(self):
         path = PurePosixPath(self.url)
         if self.type == "local" and (path.is_absolute() or ".." in path.parts or str(path) == "."):
             raise ValueError("local source must be a relative directory inside the record")
+        if self.type == "working_tree" and not path.is_absolute():
+            raise ValueError("working_tree source must be an absolute directory on the controller")
+        if self.exclude and self.type != "working_tree":
+            raise ValueError("source exclusions apply only to working_tree snapshots")
         return self
 
 
@@ -144,11 +152,14 @@ class Record(Model):
     schema_version: Literal[1] = 1
     source: Source
     validation: Resources
-    metrics: dict[str, float]  # absolute tolerance for each required numeric metric
+    validation_mode: Literal["reference", "completion"] = "reference"
+    metrics: dict[str, float] = Field(default_factory=dict)  # required absolute tolerances
     environment_probes: dict[str, list[str]] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def tolerances(self):
-        if not self.metrics or any(value < 0 for value in self.metrics.values()):
+        if (self.validation_mode == "reference" and not self.metrics) or any(
+            value < 0 for value in self.metrics.values()
+        ):
             raise ValueError("at least one finite, nonnegative metric tolerance is required")
         return self

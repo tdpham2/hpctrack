@@ -3,12 +3,15 @@ import subprocess
 
 import pytest
 import requests
+import yaml
 
 from hpctrack.backends.iri import IRIBackend
 from hpctrack.backends.pbs_ssh import PBSBackend, normalize
+from hpctrack.config import Settings
 from hpctrack.errors import TrackError
 from hpctrack.models import JobSpec, Machine
-from hpctrack.remote import SSHTransport
+from hpctrack.remote import LocalTransport, SSHTransport
+from hpctrack.service import Service
 
 
 @pytest.fixture
@@ -27,7 +30,6 @@ def machine():
         max_node_hours=1,
         max_nodes=4,
         max_walltime=600,
-        site_verified=True,
     )
 
 
@@ -203,3 +205,53 @@ def test_dead_master_never_attempts_remote_action(machine):
         transport.run(["qstat"])
     assert error.value.code == 20 and len(calls) == 1
     assert error.value.result["fix"] == "hpctrack connect aurora"
+
+
+def test_local_pbs_uses_injected_runner(machine, spec, config_path, tmp_path):
+    config = machine.model_dump()
+    config.update(
+        backend="pbs_local",
+        transport="local",
+        ssh_alias=None,
+        resource_id=None,
+        software_root=str(tmp_path / "software"),
+        work_root=str(tmp_path / "work"),
+        site_verified=False,
+    )
+    config_path.write_text(yaml.safe_dump({"machines": {"polaris": config}}))
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        assert argv[0] in ("qsub", "qstat", "qdel", "tail")
+        assert kwargs["stdin"] == subprocess.DEVNULL and kwargs["timeout"] == 30
+        stdout = {
+            "qsub": b"123.polaris\n",
+            "qstat": b'{"Jobs": {}}',
+            "qdel": b"",
+            "tail": b"synthetic output\n",
+        }[argv[0]]
+        return subprocess.CompletedProcess(argv, 0, stdout, b"")
+
+    service = Service(
+        Settings(config_path),
+        transport_factory=lambda name, cfg: LocalTransport(name, cfg, runner=run),
+    )
+    try:
+        # A legacy false flag must not block configured execution. All PBS calls
+        # below are synthetic and intercepted by the injected runner.
+        assert service.settings.machine("polaris", live=True).site_verified is False
+        health = service.doctor()["machines"]["polaris"]
+        assert health["local"]["state"] == "local" and not health["simulated"]
+        backend = service.backend("polaris")
+        assert isinstance(backend, PBSBackend) and not backend.transport.simulated
+        spec.workdir = str(tmp_path / "work/run")
+        spec.stdout_path = spec.workdir + "/stdout.log"
+        spec.stderr_path = spec.workdir + "/stderr.log"
+        assert backend.submit(spec).job_id == "123.polaris"
+        assert backend.list("test-user", True) == []
+        assert backend.transport.tail(spec.stdout_path) == "synthetic output\n"
+        backend.cancel("123.polaris")
+        assert {argv[0] for argv in calls} == {"qsub", "qstat", "qdel", "tail"}
+    finally:
+        service.store.close()

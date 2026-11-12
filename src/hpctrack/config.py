@@ -42,14 +42,6 @@ class Settings:
         if machine.backend == "fake":
             machine.software_root = str(within(self.state, self.state / machine.software_root))
             machine.work_root = str(within(self.state, self.state / machine.work_root))
-        elif live and not machine.site_verified:
-            raise TrackError(
-                "site_unverified",
-                "Complete site verification before live actions",
-                30,
-                machine=name,
-                fix="Review docs/site-notes.md and set site_verified",
-            )
         return machine
 
     def record_path(self, name, machine):

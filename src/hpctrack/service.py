@@ -12,6 +12,7 @@ from hpctrack.backends.pbs_ssh import PBSBackend
 from hpctrack.errors import TrackError
 from hpctrack.models import TERMINAL, JobSpec
 from hpctrack.records import (
+    capture_working_tree,
     check_reference_file,
     commit_record,
     compare,
@@ -59,7 +60,7 @@ class Service:
                 "proxy": "configured" if config.proxy else "unset",
             }
             for component, check in (
-                ("ssh", lambda n=name: self.transport(n).check()),
+                (config.transport, lambda n=name: self.transport(n).check()),
                 (
                     "backend",
                     lambda n=name: {
@@ -94,6 +95,7 @@ class Service:
             "status": "unvalidated",
             "current_build": None,
             "simulated": config.backend == "fake",
+            "validation_mode": load_record(path).validation_mode,
         }
         self.store.put("record", record["record_key"], record, machine)
         return project_record(self.settings, self.store, name, machine)
@@ -139,9 +141,13 @@ class Service:
             operation["status"] = status
         self.store.save_operation(operation)
 
-    def _stage_tree(self, transport, path, destination):
+    def _stage_tree(self, transport, path, destination, executables=()):
         for name, content in read_tree(path).items():
             transport.write(f"{destination}/{name}", content)
+            if name in executables:
+                result = transport.run(["chmod", "u+x", "--", f"{destination}/{name}"])
+                if result.returncode:
+                    raise TrackError("stage_failed", "Could not preserve source executable bit")
 
     def build(self, name, machine, ref=None, wait_timeout=30):
         path, record, _ = self.record(name, machine)
@@ -159,6 +165,10 @@ class Service:
                     "source_outside_record", "Demo source must be inside its record", 30
                 )
             resolved = tree_hash(read_tree(source_path))
+        elif record.source.type == "working_tree":
+            if ref is not None:
+                raise TrackError("invalid_ref", "Working-tree sources use snapshots, not refs", 2)
+            resolved = None  # Filled from the frozen content below.
         else:
             if transport.simulated:
                 raise TrackError(
@@ -200,6 +210,14 @@ class Service:
         data["recipe_hash"] = digest((Path(data["snapshot"]) / "build.sh").read_bytes())
         if record.source.type == "local":
             data["source_ref"] = tree_hash(read_tree(Path(data["snapshot"]) / record.source.url))
+        elif record.source.type == "working_tree":
+            data.update(
+                capture_working_tree(
+                    record.source, self.settings.state / "operations" / operation["id"] / "source"
+                )
+            )
+            for relative, info in data["source_files"].items():
+                info["build_path"] = f"{data['directory']}/source/{relative}"
         self._save(operation, "prepared")
         return self._run_build(operation, wait_timeout)
 
@@ -217,6 +235,13 @@ class Service:
             source_dir = directory + "/source"
             if data["source"]["type"] == "local":
                 source_dir = directory + "/recipe/" + data["source"]["url"]
+            elif data["source"]["type"] == "working_tree":
+                self._stage_tree(
+                    transport,
+                    Path(data["source_snapshot"]),
+                    source_dir,
+                    data["source_executables"],
+                )
             environment = {
                 "PREFIX": data["prefix"],
                 "SRC_REF": data["source_ref"],
@@ -263,10 +288,19 @@ class Service:
             "source_ref": data["source_ref"],
             "source": data["source"],
             "recipe_hash": data["recipe_hash"],
+            "record_snapshot": data["snapshot"],
             "build_fingerprint": data["fingerprint"],
             "simulated": data["simulated"],
             "logs": directory,
         }
+        if data["source"]["type"] == "working_tree":
+            build["source_files"] = data.get("source_files", {})
+            build.update(
+                {
+                    key: data[key]
+                    for key in ("source_snapshot", "source_commit", "source_executables")
+                }
+            )
         self.store.put("build", build["id"], build, data["machine"], operation["id"])
         return self._finish_build(operation, build)
 
@@ -280,7 +314,10 @@ class Service:
         return build
 
     def _verify_snapshot(self, data):
-        if tree_hash(read_tree(Path(data["snapshot"]))) != data["snapshot_hash"]:
+        if tree_hash(read_tree(Path(data["snapshot"]))) != data["snapshot_hash"] or (
+            data.get("source_snapshot")
+            and tree_hash(read_tree(Path(data["source_snapshot"]))) != data["source_ref"]
+        ):
             raise TrackError(
                 "snapshot_changed", "Stored operation inputs changed; refusing remote execution", 30
             )
@@ -409,6 +446,8 @@ class Service:
             )
         reference = self.store.get("reference", metadata["record_key"])
         check_reference_file(path, reference)
+        if record.validation_mode == "completion":
+            reference = None
         if reference and reference["contract_hash"] != contract_hash(path, record):
             raise TrackError(
                 "inputs_changed",
@@ -425,6 +464,7 @@ class Service:
             reference_hash=digest(reference) if reference else None,
             fingerprint=self.fingerprint(machine, record),
             tolerances=record.metrics,
+            validation_mode=record.validation_mode,
         )
         config = self.settings.machine(machine, live=True)
         directory = f"{config.work_root}/validations/{operation['id']}"
@@ -522,10 +562,15 @@ class Service:
                 "metrics": {},
                 "messages": ["Checker output missing or invalid"],
             }
-        passed = job.state == "finished" and job.exit_status in (0, None) and checker["passed"]
+        mode = data.get("validation_mode", "reference")
+        passed = job.state == "finished" and job.exit_status == 0 and checker["passed"]
         if passed and data["reference"]:
             passed = compare(checker["metrics"], data["reference"])
-        state = ("passed" if data["reference"] else "reference_pending") if passed else "failed"
+        state = (
+            ("passed" if data["reference"] or mode == "completion" else "reference_pending")
+            if passed
+            else "failed"
+        )
         validation = {
             "id": operation["id"],
             "record_key": data["record_key"],
@@ -533,9 +578,11 @@ class Service:
             "machine": data["machine"],
             "job_id": job.job_id,
             "state": state,
+            "validation_mode": mode,
             "metrics": checker["metrics"],
             "messages": checker.get("messages", []),
             "contract_hash": data["contract_hash"],
+            "record_snapshot": data["snapshot"],
             "reference_hash": data["reference_hash"],
             "fingerprint": data["fingerprint"],
             "tolerances": data["tolerances"],
@@ -550,13 +597,19 @@ class Service:
     def _finish_validation(self, operation, validation):
         data = operation["data"]
         state = validation["state"]
-        if state == "passed":
-            build = self.store.get("build", data["build_id"])
-            build["last_validation_id"] = operation["id"]
-            self.store.put("build", build["id"], build, data["machine"], operation["id"])
+        latest = self._latest_validation(data["build_id"])
+        build = self.store.get("build", data["build_id"])
+        build["last_validation_id"] = latest["id"]
+        self.store.put("build", build["id"], build, data["machine"], operation["id"])
         metadata = self.store.get("record", data["record_key"])
         if metadata["current_build"] == data["build_id"]:
-            metadata["status"] = "verified" if state == "passed" else "broken"
+            mode = latest.get("validation_mode", "reference")
+            metadata["validation_mode"] = mode
+            metadata["status"] = (
+                ("validated" if mode == "completion" else "verified")
+                if latest["state"] == "passed"
+                else "broken"
+            )
             self.store.put("record", data["record_key"], metadata, data["machine"], operation["id"])
         project_record(self.settings, self.store, data["name"], data["machine"])
         self._save(operation, "failed" if state == "failed" else "finished")
@@ -569,6 +622,13 @@ class Service:
             )
         return validation
 
+    def _latest_validation(self, build_id):
+        return max(
+            (v for v in self.store.all("validation") if v["build_id"] == build_id),
+            key=lambda v: (v["completed_at"], v["id"]),
+            default=None,
+        )
+
     def accept_reference(self, name, machine, validation_id, yes):
         if not yes or self.store.actor != "human":
             raise TrackError(
@@ -580,6 +640,7 @@ class Service:
         validation = self.store.get("validation", validation_id)
         if (
             not validation
+            or record.validation_mode != "reference"
             or validation["record_key"] != metadata["record_key"]
             or validation["state"] != "reference_pending"
         ):
@@ -612,29 +673,37 @@ class Service:
         project_record(self.settings, self.store, name, machine)
         return reference
 
-    def promote(self, name, machine, build_id, no_commit=False):
+    def _promotion_evidence(
+        self, name, machine, build_id, error="promotion_refused", validation_id=None
+    ):
         path, record, metadata = self.record(name, machine)
         build = self.store.get("build", build_id)
         reference = self.store.get("reference", metadata["record_key"])
         check_reference_file(path, reference)
-        validation = (
-            self.store.get("validation", build.get("last_validation_id")) if build else None
-        )
+        validation = self._latest_validation(build_id)
         if (
             not build
             or build["record_key"] != metadata["record_key"]
+            or build["state"] != "built"
             or not validation
             or validation["state"] != "passed"
-            or not reference
-            or validation["reference_hash"] != digest(reference)
+            or (validation_id is not None and validation["id"] != validation_id)
+            or validation.get("validation_mode", "reference") != record.validation_mode
+            or (
+                record.validation_mode == "reference"
+                and (not reference or validation["reference_hash"] != digest(reference))
+            )
             or validation["contract_hash"] != contract_hash(path, record)
             or build["recipe_hash"] != digest((path / "build.sh").read_bytes())
             or build["source"]["type"] != record.source.type
             or build["source"]["url"] != record.source.url
+            or build["source"].get("exclude", []) != record.source.exclude
             or validation["fingerprint"]["hash"] != self.fingerprint(machine, record)["hash"]
         ):
             raise TrackError(
-                "promotion_refused", "Build needs a passing comparison with current provenance", 30
+                error,
+                "Build needs a passing comparison or completion check with current provenance",
+                30,
             )
         if (
             record.source.type == "local"
@@ -643,6 +712,12 @@ class Service:
             raise TrackError(
                 "source_changed", "Demo source no longer matches the built snapshot", 30
             )
+        if record.source.type == "working_tree":
+            self._verify_snapshot(self.store.operation(build_id)["data"])
+        return metadata, validation
+
+    def promote(self, name, machine, build_id, no_commit=False):
+        metadata, validation = self._promotion_evidence(name, machine, build_id)
         operation = self._operation(
             "promote",
             machine,
@@ -662,21 +737,19 @@ class Service:
             raise TrackError(
                 "promotion_superseded", "A different build was promoted after this operation", 30
             )
-        path, record, _ = self.record(data["name"], data["machine"])
-        reference = self.store.get("reference", data["record_key"])
-        check_reference_file(path, reference)
-        validation = self.store.get("validation", data["validation_id"])
-        build = self.store.get("build", data["build_id"])
-        if (
-            not reference
-            or validation["reference_hash"] != digest(reference)
-            or validation["contract_hash"] != contract_hash(path, record)
-            or build["recipe_hash"] != digest((path / "build.sh").read_bytes())
-        ):
-            raise TrackError(
-                "promotion_changed", "Promotion evidence changed before the commit completed", 30
-            )
-        metadata.update(current_build=data["build_id"], status="verified")
+        metadata, validation = self._promotion_evidence(
+            data["name"],
+            data["machine"],
+            data["build_id"],
+            error="promotion_changed",
+            validation_id=data["validation_id"],
+        )
+        mode = validation.get("validation_mode", "reference")
+        metadata.update(
+            current_build=data["build_id"],
+            validation_mode=mode,
+            status="validated" if mode == "completion" else "verified",
+        )
         self.store.put("record", data["record_key"], metadata, data["machine"], operation["id"])
         self._save(operation, "commit_pending")
         manifest = project_record(self.settings, self.store, data["name"], data["machine"])
