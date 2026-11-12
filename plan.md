@@ -2,6 +2,22 @@
 
 Nov 11, 2026 · @Thang · revised after implementation review
 
+## Nov 12 amendment: portable agent skill
+
+Package one user-wide `hpctrack` skill for Claude Code, Codex, OpenCode, and Pi.
+The explicit offline `skills install` command manages the two distinct host paths,
+records version/file hashes, and refuses edited or unmanaged collisions; `skills status`
+and dry runs need no initialized workspace. Keep the existing workspace skill and
+operating rules as the maintained sources for the portable references.
+
+`workspace show` resolves configuration and absolute data paths without opening the
+ledger. The agent workflow inspects existing records, reads the selected workspace's
+rules, and resumes matching pending operations reported by `sw check` before launching
+another attempt. Preserve agent/session attribution and human-only authentication and
+reference acceptance. Verify the wheel outside the checkout. Filesystem tests are not
+manual host compatibility evidence. Public publishing, plugins, MCP, cross-agent
+orchestration, and the deferred post-Phase-3 work remain outside this change.
+
 ## Nov 12 amendment: per-user workspace and agent ledger
 
 hpctrack is infrastructure; users and agents create the data. These decisions

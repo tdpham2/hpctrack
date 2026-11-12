@@ -162,8 +162,21 @@ class Service:
                 revalidate.append("validation_mode_changed")
             if validation["state"] == "failed":
                 revalidate.append("validation_failed")
+        pending = [
+            {
+                "id": operation["id"],
+                "kind": operation["kind"],
+                "status": operation["status"],
+                "build_id": operation["data"].get("build_id"),
+                "job_id": operation["data"].get("job_id"),
+            }
+            for operation in self.store.pending()
+            if operation["data"].get("record_key") == key
+        ]
         filled = placeholders(path)
-        if filled:
+        if pending:
+            action = "resume"
+        elif filled:
             action = "fill_placeholders"
         elif rebuild:
             action = "build"
@@ -177,6 +190,8 @@ class Service:
             action = "none"
         return {
             "record_key": key,
+            "record_path": str(path),
+            "pending_operations": pending,
             "status": metadata["status"],
             "current_build": metadata["current_build"],
             "recipe_hash": recipe,

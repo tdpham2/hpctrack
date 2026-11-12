@@ -5,6 +5,7 @@ import click
 from pydantic import ValidationError
 
 from hpctrack import __version__
+from hpctrack import skills as skill_manager
 from hpctrack.backends.base import walltime_seconds
 from hpctrack.config import Settings, init_workspace, template_names, workspace_config
 from hpctrack.errors import TrackError
@@ -33,7 +34,7 @@ def wait_option(function):
     )(function)
 
 
-WORKSPACE_FREE = ("init", "templates")
+WORKSPACE_FREE = ("init", "templates", "skills")
 
 
 @click.group()
@@ -57,9 +58,53 @@ def cli(ctx, workspace, config_path, state_dir):
     ctx.meta["workspace"] = workspace
     if ctx.invoked_subcommand in WORKSPACE_FREE:
         return
-    service = Service(Settings(config_path or workspace_config(workspace), state_dir))
+    settings = Settings(config_path or workspace_config(workspace), state_dir)
+    if ctx.invoked_subcommand == "workspace":
+        ctx.obj = settings
+        return
+    service = Service(settings)
     ctx.obj = service
     ctx.call_on_close(service.store.close)
+
+
+@cli.group()
+@json_flag
+def skills():
+    """Install or inspect the user-wide portable agent skill; no workspace required."""
+
+
+@skills.command("install")
+@click.option("--agent", type=click.Choice([*skill_manager.DESTINATIONS, "all"]), required=True)
+@click.option("--dry-run", is_flag=True, help="Report intended changes without writing.")
+@json_flag
+def install_skills(agent, dry_run):
+    return skill_manager.install(agent, dry_run)
+
+
+@skills.command("status")
+@json_flag
+def skill_status():
+    return skill_manager.status()
+
+
+@cli.group()
+@json_flag
+def workspace():
+    """Inspect workspace configuration without opening the ledger or contacting a backend."""
+
+
+@workspace.command("show")
+@json_flag
+@click.pass_obj
+def show_workspace(settings):
+    return {
+        "workspace": str(settings.path.parent),
+        "config": str(settings.path),
+        "project": str(settings.root),
+        "records": str(settings.records),
+        "state": str(settings.state),
+        "operating_rules": str(settings.path.parent / "AGENTS.md"),
+    }
 
 
 @cli.command("init")
@@ -263,6 +308,7 @@ def show_software(service, name, machine):
     path, _, metadata = service.record(name, machine)
     return {
         "record": metadata,
+        "record_path": str(path),
         "notes": (path / "NOTES.md").read_text(),
         "builds": [
             b for b in service.store.all("build") if b["record_key"] == metadata["record_key"]

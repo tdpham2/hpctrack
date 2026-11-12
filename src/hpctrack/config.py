@@ -1,4 +1,5 @@
 import os
+import shlex
 import subprocess
 from importlib import resources
 from pathlib import Path
@@ -28,7 +29,7 @@ def workspace_config(workspace=None):
             "No hpctrack workspace found",
             2,
             workspace=str(root),
-            fix=f"hpctrack --workspace {root} init --machines demo",
+            fix=f"hpctrack --workspace {shlex.quote(str(root))} init --machines demo",
         )
     return path
 
@@ -107,6 +108,7 @@ def init_workspace(workspace=None, machines="demo", git=True):
 class Settings:
     def __init__(self, path, state_dir=None):
         path = Path(path).resolve()
+        self.path = path
         try:
             self.config = Config.model_validate(yaml.safe_load(path.read_text()))
         except (OSError, yaml.YAMLError, ValidationError) as exc:

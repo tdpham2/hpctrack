@@ -16,13 +16,29 @@ has been verified on the actual sites yet. All committed test fixtures are synth
 
 ## Install
 
-Use Python 3.10 or newer:
+Use Python 3.10 or newer. From a source checkout, build a wheel, then install the
+CLI across projects with `uv tool install`:
 
 ```sh
-python3 -m venv .venv
+uv venv
 . .venv/bin/activate
-python -m pip install -e '.[dev]'
+uv pip install -e '.[dev]'
+python -m build
+uv tool install ./dist/hpctrack-0.1.0-py3-none-any.whl
+hpctrack skills install --agent all
+hpctrack init --machines demo
 ```
+
+`demo` is explicitly simulated. For live work, select and configure the appropriate
+machine template separately. If you prefer an activated environment, install with
+`uv pip install ./dist/hpctrack-0.1.0-py3-none-any.whl` instead of `uv tool install`.
+Installation by bare package name requires a future package-index release.
+Package installation never changes agent configuration; skill installation is explicit.
+
+The portable skill works through the same JSON CLI in Claude Code (`/hpctrack`),
+Codex (`$hpctrack`), OpenCode (ask to use hpctrack), and Pi (`/skill:hpctrack`). See
+[agent setup, updates, and discovery checks](docs/agent-skills.md). After upgrading
+the package, rerun `hpctrack skills install --agent all` to update its managed skill files.
 
 For live IRI access, install the optional integration with `pip install '.[iri]'`.
 Authentication is always performed by a human. The demo requires no HPC access,
@@ -51,8 +67,8 @@ hpctrack init --machines demo        # or pbs-local, pbs-ssh, iri; then fill REP
 ```
 
 The workspace is its own Git repository; `sw promote` commits records there, never
-into the hpctrack checkout. Other commands fail with `workspace_missing` until a
-workspace exists; there is no fallback to the demo.
+into the hpctrack checkout. `skills install`, `skills status`, and `templates list` work before initialization.
+Workspace-dependent commands fail with `workspace_missing` until a workspace exists; there is no fallback to the demo.
 
 ## Local demonstration
 
@@ -95,7 +111,10 @@ automatic replacement is deliberately unsupported in this milestone.
 An agent (or a person) writes `build.sh` and the test, and hpctrack runs each attempt
 from immutable snapshots and records it. The workspace skill describes the loop:
 
-- `sw check` (offline) reports unfilled `REPLACE_*` placeholders, `rebuild_needed`
+- `workspace show` returns absolute configuration, project, records, state, and operating-rule
+  paths without opening the ledger or contacting a backend.
+- `sw check` (offline) reports matching `pending_operations` and prioritizes `next_action: resume`
+  before another build or validation. It also reports unfilled `REPLACE_*` placeholders, `rebuild_needed`
   (`recipe_changed`, `build_failed`, ...), `revalidate_needed`, and `next_action`.
 - A failed `sw build` (exit 10) returns `log_tail.stdout`/`log_tail.stderr`.
 - `sw note --section "Failures and fixes" --message ...` appends a dated, attributed
@@ -151,7 +170,8 @@ accept scientific reference candidates.
 
 ```sh
 python -m pytest
-ruff check .
+ruff check src tests examples scripts
+ruff format --check src tests examples scripts
 python -m build
 ```
 
