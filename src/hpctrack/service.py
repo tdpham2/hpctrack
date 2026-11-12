@@ -32,6 +32,17 @@ from hpctrack.store import Store
 from hpctrack.util import atomic_write, digest, now, read_tree, tree_hash
 
 
+def source_declaration_changed(build, record):
+    """Compare the declared source offline; a git build is tied to its declared ref."""
+    built, declared = build["source"], record.source
+    return (
+        built["type"] != declared.type
+        or built["url"] != declared.url
+        or built.get("exclude", []) != declared.exclude
+        or (declared.type == "git" and built.get("ref") != declared.ref)
+    )
+
+
 class Service:
     def __init__(self, settings, backend_factory=None, transport_factory=None):
         self.settings = settings
@@ -140,11 +151,7 @@ class Service:
                 rebuild.append("build_failed")
             if build["recipe_hash"] != recipe:
                 rebuild.append("recipe_changed")
-            if (
-                build["source"]["type"] != record.source.type
-                or build["source"]["url"] != record.source.url
-                or build["source"].get("exclude", []) != record.source.exclude
-            ):
+            if source_declaration_changed(build, record):
                 rebuild.append("source_declaration_changed")
             elif record.source.type == "local":
                 if tree_hash(read_tree(path / record.source.url)) != build["source_ref"]:
@@ -836,9 +843,7 @@ class Service:
             )
             or validation["contract_hash"] != contract_hash(path, record)
             or build["recipe_hash"] != digest((path / "build.sh").read_bytes())
-            or build["source"]["type"] != record.source.type
-            or build["source"]["url"] != record.source.url
-            or build["source"].get("exclude", []) != record.source.exclude
+            or source_declaration_changed(build, record)
             or validation["fingerprint"]["hash"] != self.fingerprint(machine, record)["hash"]
         ):
             raise TrackError(

@@ -367,3 +367,22 @@ def test_working_tree_completion_lifecycle(service, record, tmp_path, monkeypatc
         service.validate("tiny", "demo", build["id"], wait_timeout=10)
     assert failed.value.code == 10
     assert service.store.get("record", "tiny/demo")["status"] == "broken"
+
+
+def test_git_ref_change_requires_rebuild_and_blocks_promotion(service, record, accepted):
+    build = accepted[0]
+    url = "https://example.invalid/code.git"
+    declaration = yaml.safe_load((record / "record.yaml").read_text())
+    declaration["source"] = {"type": "git", "url": url, "ref": "v1"}
+    (record / "record.yaml").write_text(yaml.safe_dump(declaration))
+    # Demo transports refuse git sources, so present the build as a git build directly.
+    stored = service.store.get("build", build["id"])
+    stored["source"] = {"type": "git", "url": url, "ref": "v1", "exclude": []}
+    service.store.put("build", build["id"], stored)
+    assert "source_declaration_changed" not in service.check("tiny", "demo")["rebuild_needed"]
+    declaration["source"]["ref"] = "v2"
+    (record / "record.yaml").write_text(yaml.safe_dump(declaration))
+    assert "source_declaration_changed" in service.check("tiny", "demo")["rebuild_needed"]
+    with pytest.raises(TrackError) as error:
+        service.promote("tiny", "demo", build["id"], True)
+    assert error.value.result["error"] == "promotion_refused"

@@ -1,0 +1,14 @@
+schema_version: 1
+source:
+  type: git
+  url: https://github.com/ACEsuit/mace.git
+  ref: v0.3.17  # mace_polar needs >= v0.3.16
+validation_mode: completion
+validation:
+  nodes: 1
+  walltime: 900
+  queue: debug
+  account: REPLACE_ACCOUNT
+metrics: {}
+environment_probes:
+  uv: [uv, --version]
