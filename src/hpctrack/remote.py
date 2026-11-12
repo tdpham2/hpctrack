@@ -11,16 +11,16 @@ from hpctrack.util import atomic_write, digest, within
 
 
 class LocalTransport:
-    """Explicit demo transport. Executes only under this demo's configured roots."""
+    """Local file/worker operations, shared by the demo and explicit local PBS."""
 
-    simulated = True
-
-    def __init__(self, machine, config):
+    def __init__(self, machine, config, runner=None):
         self.machine = machine
         self.config = config
+        self.simulated = config.backend == "fake"
+        self.runner = runner or subprocess.run
 
     def check(self):
-        return {"state": "simulated", "simulated": True}
+        return {"state": "simulated" if self.simulated else "local", "simulated": self.simulated}
 
     def safe(self, path):
         for root in (self.config.work_root, self.config.software_root):
@@ -28,7 +28,7 @@ class LocalTransport:
                 return within(root, path)
             except TrackError:
                 pass
-        raise TrackError("path_outside_root", "Demo path is outside configured roots", 30)
+        raise TrackError("path_outside_root", "Local path is outside configured roots", 30)
 
     def write(self, path, data):
         atomic_write(self.safe(path), data)
@@ -43,9 +43,17 @@ class LocalTransport:
     def run(self, argv, timeout=30, input=None):
         try:
             kwargs = {"input": input} if input is not None else {"stdin": subprocess.DEVNULL}
-            return subprocess.run(argv, capture_output=True, timeout=timeout, **kwargs)
+            return self.runner(argv, capture_output=True, timeout=timeout, **kwargs)
         except subprocess.TimeoutExpired as exc:
             raise TrackError("remote_timeout", "Command exceeded its time limit") from exc
+        except OSError as exc:
+            raise TrackError("local_command_failed", "Could not start local command") from exc
+
+    def tail(self, path, lines=40):
+        if not path or not Path(path).is_absolute():
+            return None
+        result = self.run(["tail", "-n", str(lines), "--", path])
+        return result.stdout.decode(errors="replace")[-16000:] if result.returncode == 0 else None
 
     def start(self, directory):
         directory = self.safe(directory)

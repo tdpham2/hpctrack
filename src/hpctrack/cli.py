@@ -6,9 +6,10 @@ from pydantic import ValidationError
 
 from hpctrack import __version__
 from hpctrack.backends.base import walltime_seconds
-from hpctrack.config import Settings
+from hpctrack.config import Settings, init_workspace, template_names, workspace_config
 from hpctrack.errors import TrackError
 from hpctrack.models import TERMINAL
+from hpctrack.records import HEADINGS
 from hpctrack.service import Service
 
 
@@ -32,19 +33,60 @@ def wait_option(function):
     )(function)
 
 
+WORKSPACE_FREE = ("init", "templates")
+
+
 @click.group()
 @click.option(
-    "--config", "config_path", type=click.Path(path_type=Path), default="config/machines.yaml"
+    "--workspace",
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Data home; defaults to $HPCTRACK_HOME, then ~/.hpctrack.",
+)
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(path_type=Path),
+    help="Advanced: explicit configuration file; its directory becomes the root.",
 )
 @click.option("--state-dir", type=click.Path(path_type=Path))
 @click.version_option(__version__)
 @json_flag
 @click.pass_context
-def cli(ctx, config_path, state_dir):
+def cli(ctx, workspace, config_path, state_dir):
     """Track HPC jobs and reproducible software records. Global options precede commands."""
-    service = Service(Settings(config_path, state_dir))
+    ctx.meta["workspace"] = workspace
+    if ctx.invoked_subcommand in WORKSPACE_FREE:
+        return
+    service = Service(Settings(config_path or workspace_config(workspace), state_dir))
     ctx.obj = service
     ctx.call_on_close(service.store.close)
+
+
+@cli.command("init")
+@click.option(
+    "--machines",
+    default="demo",
+    show_default=True,
+    help="Packaged machine template; see templates list.",
+)
+@click.option("--no-git", is_flag=True, help="Do not initialize a Git repository.")
+@json_flag
+@click.pass_context
+def init_workspace_command(ctx, machines, no_git):
+    """Create a per-user workspace (records, ledger state, agent rules)."""
+    return init_workspace(ctx.meta["workspace"], machines, not no_git)
+
+
+@cli.group()
+@json_flag
+def templates():
+    """Packaged record and machine templates."""
+
+
+@templates.command("list")
+@json_flag
+def list_templates():
+    return {"records": template_names("records"), "machines": template_names("machines")}
 
 
 @cli.command()
@@ -64,7 +106,7 @@ def connect(service, machine):
     if service.store.actor != "human":
         raise TrackError("human_only", "Agents must never authenticate", 30)
     transport = service.transport(machine, live=False)
-    return transport.check() if transport.simulated else transport.connect()
+    return transport.check() if transport.config.transport == "local" else transport.connect()
 
 
 @cli.command()
@@ -235,12 +277,52 @@ def show_software(service, name, machine):
 @sw.command("init")
 @click.argument("name")
 @machine_option
-@click.option("--template", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--template", help="Packaged template name (see templates list) or directory.")
 @json_flag
 @click.pass_obj
-def init(service, name, machine, template):
+def init_software(service, name, machine, template):
     with service.store.mutation():
         return service.init(name, machine, template)
+
+
+@sw.command()
+@click.argument("name")
+@machine_option
+@json_flag
+@click.pass_obj
+def check(service, name, machine):
+    """Offline: report whether a rebuild or revalidation is needed and the next action."""
+    return service.check(name, machine)
+
+
+@sw.command()
+@click.argument("name")
+@machine_option
+@click.option("--message", required=True)
+@click.option(
+    "--section",
+    type=click.Choice(HEADINGS),
+    default="Change log",
+    show_default=True,
+)
+@json_flag
+@click.pass_obj
+def note(service, name, machine, message, section):
+    """Append a dated, attributed entry to the record's NOTES.md and the ledger."""
+    with service.store.mutation():
+        return service.note(name, machine, message, section)
+
+
+@sw.command()
+@click.argument("name")
+@machine_option
+@click.option("--since", type=click.IntRange(min=0), default=0)
+@json_flag
+@click.pass_obj
+def history(service, name, machine, since):
+    """Ledger events for one record."""
+    _, _, metadata = service.record(name, machine)
+    return service.ledger(metadata["record_key"], since=since)
 
 
 @sw.command()
@@ -295,6 +377,29 @@ def accept(service, name, machine, validation_id, yes):
 def promote(service, name, machine, build_id, no_commit):
     with service.store.mutation():
         return service.promote(name, machine, build_id, no_commit)
+
+
+@cli.group()
+@json_flag
+def ledger():
+    """Portable view of the authoritative SQLite event ledger."""
+
+
+@ledger.command("export")
+@click.option("--record", "record_key", help="NAME/MACHINE")
+@click.option("--machine")
+@click.option("--since", type=click.IntRange(min=0), default=0, help="Last exported sequence.")
+@click.option(
+    "--output",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Write JSONL here; otherwise return events inline.",
+)
+@json_flag
+@click.pass_obj
+def export(service, record_key, machine, since, output):
+    if machine:
+        service.settings.machine(machine)
+    return service.ledger(record_key, machine, since, output)
 
 
 @cli.command()

@@ -1,8 +1,6 @@
-# Copy to config/machines.yaml on Crux and replace every placeholder.
-# Live actions are refused until site verification is complete.
-project_root: ..
-records_dir: software
-state_dir: state/live
+# ALCF IRI API jobs with SSH for files. Replace every REPLACE_* value.
+records_dir: records
+state_dir: state
 machines:
   polaris:
     backend: iri
@@ -24,7 +22,6 @@ machines:
     max_nodes: 1
     max_walltime: 600
     max_node_hours: 0.2
-    site_verified: false
   aurora:
     backend: iri
     transport: ssh
@@ -45,4 +42,3 @@ machines:
     max_nodes: 1
     max_walltime: 600
     max_node_hours: 0.2
-    site_verified: false

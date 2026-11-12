@@ -1,19 +1,13 @@
-project_root: ../..
-records_dir: state/demo/records
-state_dir: state/demo
+# Simulated local machine. Demo evidence does not validate any real site.
+records_dir: records
+state_dir: state
 machines:
   demo:
     backend: fake
     transport: local
     software_root: target/software
     work_root: target/work
-    queues:
-      debug:
-        min_nodes: 1
-        max_nodes: 4
-        min_walltime: 1
-        max_walltime: 300
-        max_active: 2
+    queues: {debug: {min_nodes: 1, max_nodes: 4, min_walltime: 1, max_walltime: 300, max_active: 2}}
     accounts: [demo]
     filesystems: [local]
     max_nodes: 4

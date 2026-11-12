@@ -1,5 +1,5 @@
 include AGENTS.md plan.md .gitignore
 recursive-include docs *.md
-include config/machines.example.yaml
-recursive-include examples *.yaml *.sh *.j2 *.py *.json *.md
+recursive-include src/hpctrack/templates *
 recursive-include tests *.py
+recursive-include examples *
