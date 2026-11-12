@@ -1,0 +1,5 @@
+include AGENTS.md plan.md .gitignore
+recursive-include docs *.md
+include config/machines.example.yaml
+recursive-include examples *.yaml *.sh *.j2 *.py *.json *.md
+recursive-include tests *.py

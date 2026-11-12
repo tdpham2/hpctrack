@@ -1,0 +1,13 @@
+schema_version: 1
+source:
+  type: local
+  url: source
+  ref: snapshot
+validation:
+  nodes: 1
+  walltime: 30
+  queue: debug
+  account: demo
+metrics:
+  sum_of_squares: 0.000001
+environment_probes: {}

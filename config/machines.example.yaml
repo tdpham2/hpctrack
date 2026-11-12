@@ -1,0 +1,48 @@
+# Copy to config/machines.yaml on Crux and replace every placeholder.
+# Live actions are refused until site verification is complete.
+project_root: ..
+records_dir: software
+state_dir: state/live
+machines:
+  polaris:
+    backend: iri
+    transport: ssh
+    ssh_alias: polaris
+    user: REPLACE_USERNAME
+    resource_id: REPLACE_CONFIRMED_RESOURCE_ID
+    software_root: /REPLACE_PROJECT/software
+    work_root: /REPLACE_PROJECT/jobs
+    queues:
+      debug:
+        min_nodes: 1
+        max_nodes: 1
+        min_walltime: 300
+        max_walltime: 600
+        max_active: 1
+    accounts: [REPLACE_ACCOUNT]
+    filesystems: [REPLACE_FILESYSTEM]
+    max_nodes: 1
+    max_walltime: 600
+    max_node_hours: 0.2
+    site_verified: false
+  aurora:
+    backend: iri
+    transport: ssh
+    ssh_alias: aurora
+    user: REPLACE_USERNAME
+    resource_id: REPLACE_CONFIRMED_RESOURCE_ID
+    software_root: /REPLACE_PROJECT/software
+    work_root: /REPLACE_PROJECT/jobs
+    queues:
+      debug:
+        min_nodes: 1
+        max_nodes: 1
+        min_walltime: 300
+        max_walltime: 600
+        max_active: 1
+    accounts: [REPLACE_ACCOUNT]
+    filesystems: [REPLACE_FILESYSTEM]
+    max_nodes: 1
+    max_walltime: 600
+    max_node_hours: 0.2
+    site_verified: false
