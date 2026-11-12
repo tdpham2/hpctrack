@@ -1,12 +1,8 @@
 # Deploying the local implementation to Crux
 
-For the user-selected first installation from an existing Polaris session, follow
-the [personal gRASPA pilot](graspa-pilot.md). Its local PBS and completion-validation
-choices supersede the Crux/LAMMPS pilot sequence below for that installation only.
-
 The current deliverable is the local Phase 3 milestone. Local tests do not establish
-site compatibility or scientific validity. The [site notes](site-notes.md) are
-advisory; there is no site-verification approval gate. Explicit machine configuration
+site compatibility or scientific validity. Site notes, kept locally,
+are advisory; there is no site-verification approval gate. Explicit machine configuration
 and resource limits still apply. No site information is needed to develop or test the demo.
 
 1. Copy the source checkout or a built wheel to persistent storage available from

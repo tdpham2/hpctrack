@@ -5,9 +5,8 @@ tracking. Local development currently covers the foundation, jobs, and software
 record lifecycle (Phases 1–3). Staleness checks, scaling studies, dashboard, and
 operational skills follow the planned Phase 3 review.
 
-For your own modified source checkout, see the [gRASPA Polaris pilot](docs/graspa-pilot.md)
-(`--template graspa`).
-It uses explicit local PBS execution, working-tree snapshots, and completion-only
+For your own modified source checkout, start from the gRASPA example
+(`--template examples/graspa/record`; examples are not packaged). It uses explicit local PBS execution, working-tree snapshots, and completion-only
 validation through the existing CLI. Live actions use the explicit machine
 configuration and resource limits without a site-verification approval gate.
 
@@ -157,8 +156,8 @@ python -m build
 ```
 
 Tests use isolated temporary directories, mocked HTTP/SSH, and tiny local scripts.
-No real scheduler or token store is contacted. See [the implementation plan](plan.md),
-[deployment instructions](docs/deployment.md), and [advisory site notes](docs/site-notes.md).
+No real scheduler or token store is contacted. See [the implementation plan](plan.md)
+and [deployment instructions](docs/deployment.md).
 
 Shell recipes/checkers are trusted code. Validating configured paths is not an
 operating-system sandbox. The demo and real transports share workflow code but

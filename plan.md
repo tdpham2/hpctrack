@@ -15,7 +15,8 @@ supersede the single-repository layout, the `examples/` demo paths, and the
   missing workspace is an error (`workspace_missing`), never a demo fallback.
   `--config FILE` remains an advanced override.
 - Record and machine templates ship as package data (`hpctrack templates list`,
-  `sw init --template NAME|DIR`). Templates carry `REPLACE_*` placeholders that
+  `sw init --template NAME|DIR`). Only the generic `demo` record is packaged;
+  real-code test cases such as gRASPA live in `examples/` and are used by path. Templates carry `REPLACE_*` placeholders that
   `sw check` reports and build/validation refuse.
 - SQLite stays authoritative (schema version 2). Events carry `actor_detail`
   (`kind`, `user`, `agent`, `session`); `ledger export` and `sw history` give a
@@ -44,11 +45,11 @@ reference-comparison requirements below; the Phase 3 review checkpoint remains.
   the live pilot. The user subsequently completed that review and removed the
   site-verification gate. Site/storage notes are advisory; configured limits remain enforced.
 
-See [the pilot runbook](docs/graspa-pilot.md). Later phases remain deferred.
+Later phases remain deferred.
 
 ## Implementation status and confirmed decisions
 
-**Develop and test locally first; site notes are advisory, with no deployment approval gate.** The user removed the site-verification gate. Local acceptance uses an isolated demo transport/backend and synthetic fixtures. Keep live observations in [docs/site-notes.md](docs/site-notes.md) and distinguish unverified facts from observed results. Initialize Git where repository metadata is writable.
+**Develop and test locally first; site notes are advisory, with no deployment approval gate.** The user removed the site-verification gate. Local acceptance uses an isolated demo transport/backend and synthetic fixtures. Keep live observations in local site notes (not tracked in this repository) and distinguish unverified facts from observed results. Initialize Git where repository metadata is writable.
 
 - Use IRI for both Polaris and Aurora. Keep PBS over SSH as an explicitly configured alternative, never an automatic submission fallback.
 - Make `sw check` inspect-only by default; remote execution requires the explicit flags described below.
@@ -77,7 +78,7 @@ Out of scope for v1:
 
 ## Advisory site observations
 
-Use the human-run collection procedure and S01–S12 checklist in [docs/site-notes.md](docs/site-notes.md) as needed for troubleshooting. Record execution location, timestamp, commands or site guidance, sanitized results, and the observer. Public documentation and workstation settings are not substitutes for actual site observations; completing this checklist is not required to run configured operations.
+Use the human-run collection procedure and S01–S12 checklist in the local site notes as needed for troubleshooting. Record execution location, timestamp, commands or site guidance, sanitized results, and the observer. Public documentation and workstation settings are not substitutes for actual site observations; completing this checklist is not required to run configured operations.
 
 - Confirm SSH routes, master lifetime, idle policies, and detached-process survival on both targets.
 - Confirm Crux job lifetime/preemption, durable repository/state storage, one-controller ownership, and site-supported SQLite locking and durability. A passing smoke test alone does not establish reliable network filesystem behavior.
@@ -134,7 +135,6 @@ hpctrack/
     dashboard.py             # static HTML generator
   software/<name>/<machine>/ # one software record each
   skills/<skill>/SKILL.md
-  docs/site-notes.md
   state/                     # gitignored: hpctrack.db, logs, dashboard output
   tests/
 ```
@@ -456,4 +456,4 @@ Notes for the implementing agent:
 
 - Phases 1 to 3 give a usable tool. Stop and ask for review after Phase 3, since the record format is the hardest part to change later.
 - Label local adapter fixtures as synthetic; add sanitized real qstat/IRI responses during deployment acceptance.
-- Anything in this plan that conflicts with docs/site-notes.md yields to the site notes; flag the conflict instead of working around it.
+- Anything in this plan that conflicts with the local site notes yields to the site notes; flag the conflict instead of working around it.

@@ -307,9 +307,7 @@ def test_working_tree_completion_lifecycle(service, record, tmp_path, monkeypatc
         '#!/bin/bash\nset -eu\n"$SRC_DIR/install.sh"\n'
         'mkdir -p "$PREFIX/bin"\ncp "$SRC_DIR/calculate.py" "$PREFIX/bin/calculate.py"\n'
     )
-    checker = (
-        Path(__file__).resolve().parents[1] / "src/hpctrack/templates/records/graspa/test/check.py"
-    )
+    checker = Path(__file__).resolve().parents[1] / "examples/graspa/record/test/check.py"
     (record / "test/check.py").write_bytes(checker.read_bytes())
     # Synthetic application output: no GPU or site execution is involved.
     output = (

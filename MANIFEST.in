@@ -2,3 +2,4 @@ include AGENTS.md plan.md .gitignore
 recursive-include docs *.md
 recursive-include src/hpctrack/templates *
 recursive-include tests *.py
+recursive-include examples *

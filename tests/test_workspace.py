@@ -65,6 +65,9 @@ def test_record_template_by_name_or_path(tmp_path):
     demo = record_template("demo")
     load_record(demo)
     assert record_template(str(demo)) == demo
+    graspa = ROOT / "examples/graspa/record"
+    assert record_template(str(graspa)) == graspa
+    load_record(graspa)
     with pytest.raises(TrackError) as error:
         record_template("missing-template")
     assert "demo" in error.value.result["available"]
@@ -171,7 +174,7 @@ def test_cli_workspace_end_to_end(tmp_path):
     result, payload = run("status", env=env)
     assert result.returncode == 2 and payload["error"] == "workspace_missing"
     result, payload = run("templates", "list", env=env)
-    assert {"demo", "graspa"} <= set(payload["data"]["records"])
+    assert payload["data"]["records"] == ["demo"]
     result, payload = run("init", "--machines", "demo", env=env)
     assert result.returncode == 0 and payload["data"]["workspace"] == str(tmp_path / "ws")
     result, payload = run("sw", "init", "tiny", "--machine", "demo", "--template", "demo", env=env)
