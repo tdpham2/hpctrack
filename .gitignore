@@ -1,0 +1,16 @@
+.venv*/
+.cache/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+state/
+config/machines.yaml
+.env
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
